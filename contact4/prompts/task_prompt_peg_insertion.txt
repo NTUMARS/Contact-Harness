@@ -1,0 +1,83 @@
+# Task prompt
+
+Read docs/agent_prompt.txt first.
+
+- Goal (connector and target): Fully insert the grasped peg into its matching hole (please identify the peg and the hole in the metal block below it). This is a fully autonomous task, thus do not stop unless explicitly asked.
+- Initial state (grasp and setup): The peg is already grasped near its top with the insertion end exposed, pointing down. Check block stability and finger clearance.
+- Completion (observable success): The peg is inserted
+
+- Observations (action and completion feedback):
+  python get_observation.py --observations force tactile_tip_world.wrench eef_pose joint_angles left_wrist.rgb right_wrist.rgb head.rgb --wrench tcp --tactile-reference connector
+
+  (1). Use robot force[0:3] for force feedback.
+  (2). For torque feedback, use only tactile_tip_world.wrench with frame=world and reference=connector (peg tip). 
+  (3). Retain established geometry and the last correction's effect; reassess after unexpected feedback or setup changes.
+
+- Sequence (required order):
+
+  (0). Calibrate tactile and force observations at task start with the current peg grasp still and clear of block contact. Repeat after grasp changes, never under external contact.
+
+  (1). Roughly align the peg axis in free space so the tip can rest on the block top surface near the opening. Fine centering happens through contact; do not seek perfect visual alignment first. However for some blocks, the contact surface is very small, thus blindly moving down to make contact first will easily miss the whole block surface. Therefore, you need to check different views first to decide if the contact surface is small. If so, you need to first move close enough to the block carefully for better visual alignment (make sure you use all views to understand the true state of the peg. See important note at the end of the prompt), then more or less align visually in order to ensure resting on the surface when you advance. Try to make the peg tip slightly off-center (by a little) from the hole for a start of the next phase. 
+
+  (2). Approach and establish light surface contact. Confirm the contact on the block top surface using both wrist images and robot force feedback (expecting meaningful magnitude of force). Before any sliding command: Verify in all three views that the peg tip is contacting the top face of the block: not beside or beyond the block. Distinguish peg contact from gripper-finger contact. Force increase alone does not establish this. If any view contradicts that interpretation, or the contact location remains uncertain, do not slide or advance. Withdraw to a clear position, reobserve, and realign.
+
+  (3). Surface searching: After making contact and being sure this is the block surface, remember this coordinate for later task-completion verification. Maintain contact force under the default 10 N while sliding toward the visible hole center, or its last reliable estimated location if the opening is temporarily occluded. 
+  Mandatory entry gate: Before ending surface search, explicitly assess fresh, zoomed images: left wrist: PASS/FAIL/UNCERTAIN; right wrist: PASS/FAIL/UNCERTAIN; head: not needed. PASS requires the peg tip to fully occupy the opening with no visible gap. Occlusion or insufficient detail means UNCERTAIN, never PASS. Proceed only with wrist PASS results. Force, TCP travel, and apparent engagement cannot override this gate.
+  
+  (4). Connector alignment: Request to set the soft force limit to 20N (This should be 25 N instead for larger connectors like plugs). Do not set 20 N or begin axial insertion unless the entry gate above has passed. This force limit is also the force you should try to maintain. Do translation and rotation adjustment in this phase to reduce lateral force and bending torques while continuing with the insertion through maintain the axial contact force. Before making the decision to release gripper due to succeed, use different views, focusing on the peg, verifying is it truly inserted. As it may look inserted visually while it is actually stuck at the surface, judge the following for important signals of successful insertion or end of exploration: (a). The previously recorded coordinate may be used to compare whether the peg is inserted by sufficient distance (at least 5mm). (b) Under ideal seating case, the lateral forces and bending torque should be small, reach to a minimum (given the tactile deformation can be complex), or even close to zero (may not be zero as the estimations may be inaccurate). 
+
+  Important: Keep adjusting translation and rotation to reduce lateral forces and bending torques, while advancing axially as needed to maintain force near the current soft limit. Do either translation or rotation only as it is not possible to tell the contribution of torque variation in combined motions. Thus the recommended patter is reaching to the soft limit possibly fast through pushing, then do orientation adjustment. Improved readings or ≥5 mm TCP travel alone do not justify release: confirm engagement in multiple views and continue until lateral forces and bending torques approach baseline or a verified local minimum under maintained axial preload. However, the maximum adjustment command call in this phase is 7 times, after which, simply do final verification on whether the peg is still in the hole then release and proceed with the next step.
+
+  (5). After releasing and the peg stays in the hole, most likely it is not fully inserted. In the last phase, there are 2 possibilities: (a) the peg has a cable: you move back then grasp the cable so that the finger tip rest on the connection of the cable with the peg (to avoid firm grasping of the peg again); (b) the peg does not have a cable: you move back, fully close the gripper, and do not grasp the peg again. As impedance may cause the gripper to drop or lift, make sure you check after moving back and adjust accordingly to maintain the same height. At the same time, check if the peg is at the center (needs to be centered, otherwise keeps adjusting) of the gripper opening visually. Move to adjust together with the height if not. After grasping, do not do calibration, request for change in the soft force limit to 20N (this magnitude should align with the soft limit in phase (4)), and make a larger-distance openloop 7cm push to insert the peg using the finger-tip. Do not do any rotation or translation adjustment from this point on. If you see the peg is still not fully inserted, the only option is to regrasp and re-push.
+
+- Command frame (action convention): Use delta --frame base. Surface-search moves are parallel to the block top surface, with normal adjustments to maintain contact. After entry, advance along the hole's inward axis (world -Z). Determine these directions from the block and hole geometry, independently of the camera's forward axis.
+
+- Contact target (load and progress): Use agent_request.py set-soft-force between completed motion commands. Set the soft limit to 10 N for surface search. Once entry or alignment are confirmed, increase the threshold accordingly if more axial pushing force is needed, as indicated in step (4) and step (5). Confirm the update succeeded before pushing. In all in-contact phases, the contact force target for adjusting penetration depth should follow the current soft force limit. Slightly retreat if the force is too large and gently re-establish contact if it is too small.
+
+- Motion style (size and batching): 
+  (1). Longer moves and --next are preferred for all action before contact. Due to the force error and impedance controller, small movement like 1-2 mm may not result in meaningful displacement, thus will cause undesirable repeated adjustment in the freespace. This phase can be relatively aggressive. However, never move more than 5cm at once. And it could be possible that the open loop aggressive movement will make the peg miss the block surface completely (as emphasized in task sequence's step (1)). you need to be aware of this find of situation and do not start in-contact searching until you confirm making contact with the surface from multi-view observations. 
+  (2). Given that there are soft force limit, you can be more confident when commanding the robot to only do translation. This point is raised because speed of completion is another important requirement beside accuracy.
+  (3). Therefore, under both surface searching and connector alignment phase, use translations of 5 mm or rotations of 3.0 degrees over 1 s (note: revert the direction in the next prediction if the measured torque increase). If the measured contact force to be maintained is still far from the limit in the alignment phase (eg, a 5N gap), the advancing distance should be larger than 5 mm (eg. 8 mm). Start at the lower end and reduce for tighter clearance, deeper engagement or rising load. Use --rotation-deg for degrees. Due to impedance, a small 1 mm adjustment will likely not reflect in the resulted motion, so do not take it easily as a 'stall' or 'jam' when it is in the in-contact sliding phase
+
+- Orientation correction (axis and direction): Use world-frame tactile torque for tilt corrections when bending load rises. Retain contact for a small trial rotation. Reobserve; keep the direction only if the tactile torque error moves toward baseline without worsening alignment or other loads. Otherwise reduce pressure and reverse or withdraw if situation is too complicated. When adjusting torque during the insertion phase, also try to reduce the lateral force together (force along non-insertion axis) as this may also cause jamming. 
+
+- Camera and tool geometry (task-specific setup):
+  (0) Always zoom into the peg insertion area first to check progress, never blindly read the image and output. Make sure you understand the image before you move.
+  (1) Left wrist: mounted on the hand and looking along the gripper's approach axis (straight down at the initial pose); the fingers and the peg appear near the bottom centre of the image, with the block and hole below them. Image right = tool -X, image up = tool +Y.
+  (2) Initial left-gripper mapping: gripper tip forward advancing (tool +Z) = world -Z / base +Y (pointing down). The hand yaw differs between episodes, so take the gripper's left and up directions in world/base axes from the measured eef_pose (or use delta --frame tool for gripper-aligned moves).
+  (3) After left-arm rotation: cache the initial measured base-frame EEF rotation R0; at rotation R, update directions with d = R @ R0.T @ d_reference. Derive both matrices from measured xyz Euler angles.
+  (4) Right wrist: a fixed side camera beside the block at the hole height, looking along world +Y: image right = world +X, image up = world +Z. Use right_wrist.rgb as a side view to check peg/hole alignment along world X and the remaining gap. This view is for auxiliary decision making; the left-view mapping does not apply.
+  (5) Head: a fixed camera above and in front of the block (toward world +X and +Y), looking down at the block; useful for the peg/block relation along both horizontal axes.
+
+- Tool geometry (rotation pivot): Rotation-only commands pivot about the TCP, so an offset peg tip sweeps an arc. 
+
+- Force/tactile-torque interpretation (baseline and ambiguity): Use tactile torque direction and changes as qualitative loading cues to guide alignment rotations and avoid jams, not to calculate a rotation angle. Compare robot force and tactile torque against pre-contact baselines, ignoring resting noise. Both selected signals use world axes; for --frame base rotations, map world (x,y,z) to base (x,-z,y). Verify corrective direction by its effect.
+
+- Controller limitation (contact response): The soft constraint clips translation components that oppose excessive force; it does not guarantee a force cap. There is no explicit torque limit, and rotation may continue while translation is clipped. A backward command may reduce preload without moving the tip or breaking contact.
+
+- Visibility (viewing approach): 
+  (1). During contact, approach from above and retain the hole location while it is visible. If it becomes occluded, continue surface search using the right wrist/head view or memory; occlusion alone does not require breaking contact. Withdraw for inspection if no view or retained estimate provides a reliable target, or contact remains unstable after adjustment.
+  (2). When the peg is close enough, the peg and fingers may hide the hole in the left wrist image while it is actually aligned. This is because the left wrist camera is viewing from top along the peg. Use multi-view information to confirm on the situation.
+  (3). However, before block-surface contact is confirmed, if the block becomes hidden, stop the descent and reassess the peg relative to the block. Force increase or stalled motion alone does not confirm block-surface contact. Continue an occluded surface search only after identifying contact with the block surface.
+
+
+- Routine examples (preferred patterns to follow when observations meet the conditions):
+
+  - Contact is lost or too large during a slide: integrate forth and back movement accordingly with the next tentative motion.
+  - Opening becomes hidden during the surface slide phase, but its retained location estimate remains reliable: continue surface slides toward it.
+  - Tip begins entering the opening: switch from surface search to axial insertion steps.
+  - Uncovered hole just on the left of the connector tip: move left directly without easing force (impedance may cause the position to deviate). Same for all directions.
+  - (alternative, not forced) World-X tactile torque error: trial about world +X with python terminal_command.py delta --frame base --rotation-deg 1.0 0 0 --duration 1 --wait.
+  - (alternative, not forced) World-Y tactile torque error: trial about world +Y with python terminal_command.py delta --frame base --rotation-deg 0 0 1.0 --duration 1 --wait.
+  - (alternative, not forced) World-Z tactile torque error: trial about world +Z with python terminal_command.py delta --frame base --rotation-deg 0 -1.0 0 --duration 1 --wait.
+  - When commanding the gripper to open at the end of step (4) and (5), always use the following pattern in a row: withdraw by 3cm first (to prevent the gripper from colliding with the block surface due to previous impedance behavior), then release the gripper, then move back further to prepare for step (5). Otherwise the peg will be pulled out.
+
+
+- Important hint, must follow: 
+  
+  (1) Make sure you truly understand the multi-source observation before generating command, and do not simply copy the most recent motion patterns directly. 
+  (2) Before establishing contact, use the right wrist camera to decide the current height of the peg tip above the block as it provides the most informative side view. Before task sequence step (4) in the gating phase, the peg may looks aligned due to the blocking view. Use the right camera for motion decision (eg, if there is still a gap along world X) 
+  (3) Do not blindly adjust for free space position in task sequence step (1). The peg tip may already be beside the block, below its top surface, and blindly assuming freespace motion will cause the peg to collide with the block and cause non-recoverable rotation in finger tips. Withdraw immediately in this case. Before you intentionally making contact with the block surface, any abnormal lateral force (with meaningful magnitude) is likely suggesting the above situation. Thus you need to also check for force even the current phase is supposed to be in the freespace.
+  (4) Do not blindly adjust for force and torque in the task sequence step (4). Your rotation and translation may move the peg completely out of the hole. Make sure you check the vision from all views and make sure you understand if the peg is still in the hole or already came out and tilted after every adjustment before making decision for the next move. If the peg is out already, simply withdraw and try from the first step over again.
+  (5) in the task sequence step (3), due to the strange shape or sharp corner of the peg tip, moving in one direction may cause jam even though there is clear gap in that direction. Thus in this phase, if the command in one direction barely moves the EEF, then exploring other (eg, orthogonal) directions may help resolve the stress.
+

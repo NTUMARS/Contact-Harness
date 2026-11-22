@@ -1,0 +1,12 @@
+# Environment of the simulator (.venv_sim), Python 3.10
+robosuite==1.4.0
+mujoco==2.3.2
+numpy==2.2.6
+scipy==1.15.3
+numba==0.68.0
+pyzmq==27.2.0
+msgpack==1.2.3
+opencv-python==5.0.0.93
+pillow==12.3.0
+termcolor==3.3.0
+PyOpenGL==3.1.10

@@ -1,0 +1,25 @@
+# Python packages of the three services (Python 3.10).
+# The ROS Python modules come from the ROS installation and the catkin workspace.
+numpy==2.2.6
+scipy==1.15.3
+Flask==3.1.2
+Werkzeug==3.1.3
+PyYAML==6.0.2
+opencv-python==4.12.0.88
+pyrealsense2==2.56.5.9235
+# Needed to run the ROS 1 Python tools (rospy, roslaunch, xacro) from this environment.
+rospkg==1.6.0
+catkin-pkg==1.1.0
+defusedxml==0.7.1
+# Dependencies of the packages above, at the versions we used.
+blinker==1.9.0
+click==8.3.0
+itsdangerous==2.2.0
+Jinja2==3.1.6
+MarkupSafe==3.0.2
+distro==1.9.0
+docutils==0.22.2
+packaging==25.0
+pyparsing==3.2.5
+python-dateutil==2.9.0.post0
+six==1.17.0

@@ -1,0 +1,5 @@
+Byte-identical copies of two asset folders of LIBERO
+  libero/libero/assets/stable_scanned_objects/akita_black_bowl
+  libero/libero/assets/stable_scanned_objects/plate
+Used by place_tasks.py when LIBERO is not installed, so the Place scene is the same with and without it.
+LIBERO license: MIT (https://github.com/Lifelong-Robot-Learning/LIBERO).

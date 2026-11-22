@@ -1,0 +1,27 @@
+# Copy of franka_control/config/franka_control_node.yaml of franka_ros 0.10.2 (Apache-2.0).
+# The Cartesian force and joint torque collision thresholds are arguments of impedance.launch.
+arm_id: $(arg arm_id)
+joint_names:
+  - $(arg arm_id)_joint1
+  - $(arg arm_id)_joint2
+  - $(arg arm_id)_joint3
+  - $(arg arm_id)_joint4
+  - $(arg arm_id)_joint5
+  - $(arg arm_id)_joint6
+  - $(arg arm_id)_joint7
+
+joint_limit_warning_threshold: 0.1 # [rad]
+rate_limiting: true
+cutoff_frequency: 100
+internal_controller: joint_impedance
+realtime_config: enforce
+collision_config:
+  lower_torque_thresholds_acceleration: [20.0, 20.0, 18.0, 18.0, 16.0, 14.0, 12.0] # [Nm]
+  upper_torque_thresholds_acceleration: $(arg collision_torque_thresholds) # [Nm]
+  lower_torque_thresholds_nominal: [20.0, 20.0, 18.0, 18.0, 16.0, 14.0, 12.0] # [Nm]
+  upper_torque_thresholds_nominal: $(arg collision_torque_thresholds) # [Nm]
+  # [Fx, Fy, Fz, Tx, Ty, Tz], units [N, N, N, Nm, Nm, Nm].
+  lower_force_thresholds_acceleration: [$(arg collision_contact_threshold), $(arg collision_contact_threshold), $(arg collision_contact_threshold), 25.0, 25.0, 25.0]
+  upper_force_thresholds_acceleration: [$(arg collision_force_threshold), $(arg collision_force_threshold), $(arg collision_force_threshold), 25.0, 25.0, 25.0]
+  lower_force_thresholds_nominal: [$(arg collision_contact_threshold), $(arg collision_contact_threshold), $(arg collision_contact_threshold), 25.0, 25.0, 25.0]
+  upper_force_thresholds_nominal: [$(arg collision_force_threshold), $(arg collision_force_threshold), $(arg collision_force_threshold), 25.0, 25.0, 25.0]

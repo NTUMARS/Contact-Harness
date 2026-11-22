@@ -1,0 +1,44 @@
+# Task prompt
+
+Read docs/agent_prompt.txt first.
+
+1. Task description
+
+- Goal (letters, style, workspace and desired result): Write the requested letter(s) on the whiteboard. Follow the requested size and placement; use uppercase block letters unless another case or style is specified. If no letters are specified, ask before drawing.
+- Initial state (tool, grasp and starting assumptions): A board-compatible pen is already held securely in the gripper, with its tip exposed.
+- Completion (observable success criteria): The letters are recognizable, with the intended straight strokes, curves, openings and connections. Finish with the pen clear of the board.
+
+
+2. Action requirements
+
+- Observations (fields needed to choose actions and check completion): Use force, eef_pose, joint_angles, left_wrist.rgb and head.rgb as needed:
+  python get_observation.py --observations force eef_pose joint_angles left_wrist.rgb head.rgb --wrench tcp
+
+- Sequence (required order of actions): Locate clear writing space and plan each letter's strokes, spacing and pen lifts before contact. Approach the first stroke's start, establish light contact, then draw parallel to the board. Inspect the result between strokes or short curve sequences.
+
+- Contact target (desired contact, force or other physical conditions): Use only enough pressure to produce continuous ink, staying well below the active soft threshold (default 10 N). Adjust contact with small movements along the board normal using images and force trends.
+
+- Motion style (preferred movement pattern and action size): Draw a straight component in one action when space and motion limits allow. The server produces straight translation segments, so approximate curves in letters such as R, O and G conservatively with 0.5–1 cm segments (0.005–0.01 m), shorter for tight curvature or near a junction. Batch a few clear segments with --next and --wait, then observe and continue incrementally. Close intended loops over multiple iterations; preserve intentional openings.
+
+- Pen contact (when to maintain contact or lift): Keep contact through connected strokes, corners and successive curve segments. Lift whenever travel to the next stroke would add an unwanted line, including between separate letters. Retract along the board normal until the tip visibly clears, move to the next start while clear, then re-establish light contact. Do not lift at every curve segment.
+
+- Restrictions (task-specific actions to avoid): Keep the pen grasped and its orientation steady while drawing; gripper commands should not be needed. Avoid repeatedly tracing completed strokes unless a visible gap needs repair.
+
+
+3. Task-specific notes
+
+- Geometry (working pose, coordinate assumptions and object relationships): Plan from the actual pen tip; it may be offset from the configured TCP. The whiteboard lies flat on the table, writing face up: the board normal is world Z (into the board is world -Z). Letters are read from the robot side: up along the letters is world +X (away from the robot) and rightward along the writing is world -Y. At the initial pose the pen points straight down; positive world Y points left in the wrist image, and positive world X points up in the wrist image. The head camera views the board from above, in front of and to the left of the robot, looking back toward it. Verify this relationship and the approach direction from observations before applying it.
+
+- Visibility (occlusions, useful views and ways to improve observation): Use the wrist view for the tip and local ink, and the head view for overall shape and spacing. If the pen obscures the result, lift and move clear before inspecting.
+
+- Feedback interpretation (task-specific ambiguities): Estimated force alone does not prove contact. Use visible tip contact and new ink together with force feedback. After constrained motion, compare the actual tip and drawn endpoint with the plan before continuing.
+
+- Decision rules (letter geometry and stroke transitions):
+
+  - O: maintain contact around the loop, join the starting point carefully, then lift.
+  - R: draw the stem, lift to its top, draw the curved bowl back to the stem midpoint, then continue into the diagonal leg.
+  - G: retain the opening in the outer curve and add the inward bar; do not close it into an O.
+  - A: draw the two connected outer legs, then lift to the crossbar's start and draw the crossbar.
+  - Curve drifting or a junction approaching: shorten the next segments and inspect before committing further motion.
+
+- Do not make up for the incomplete component (say the lines are not connected etc)

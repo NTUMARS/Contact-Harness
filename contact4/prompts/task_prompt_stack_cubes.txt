@@ -1,0 +1,41 @@
+# Task prompt
+
+Read docs/agent_prompt.txt first.
+
+1. Task description
+
+- Goal (object/workspace and desired result): Pick up the red cube and place it on top of the green cube.
+- Initial state (tool, grasp and starting assumptions): The gripper is open and points straight down, about 10 cm above the table. The red cube (about 4 cm wide) and the green cube (about 5 cm wide) stand on the table in front of the robot, at random positions and orientations.
+- Completion (observable success criteria): The red cube rests on top of the green cube without being held, and stays there after the gripper has moved away.
+
+
+2. Action requirements
+
+- Observations (fields needed to choose actions and check completion): Use force, tactile_left.wrench, tactile_right.wrench, tactile_tip_world.wrench, eef_pose, joint_angles, gripper, left_wrist.rgb, right_wrist.rgb and head.rgb as needed:
+  python get_observation.py --observations force tactile_left.wrench tactile_right.wrench tactile_tip_world.wrench eef_pose joint_angles gripper left_wrist.rgb right_wrist.rgb head.rgb --wrench tcp
+
+- Sequence (required order of actions): Locate both cubes. Calibrate the force and tactile observations with the gripper open and clear of any contact. Move above the red cube and turn the hand about the vertical axis so that the fingers face two opposite side faces of the cube. With the gripper open wider than the cube, lower the fingertips beside the cube until the force shows light contact with the table, then raise them by about 1 cm and close the gripper. Check the grasp with both the gripper reading and the tactile pads, recalibrate the force observation while the held cube is clear of any contact, and lift it well clear of the table. Move it above the green cube, turn it to match the green cube's edges, and lower it in small steps while watching the vertical force. As soon as the force shows that the red cube rests on the green cube, open the gripper, move straight up, and check that the red cube stays on top.
+
+- Contact target (desired contact, force or other physical conditions): Find every surface by force rather than by sight alone, and keep each contact light. When finding the table before the grasp, stop at about 2 N. When lowering the held red cube, stop as soon as the upward force rises by about 1 to 2 N above its free-hanging reading, well below the active soft threshold (default 10 N); this means the red cube rests on the top of the green cube. Do not press harder.
+
+- Motion style (preferred movement pattern and action size): Larger moves are fine in free space. For the final approach to the grasp and to the placement, use small steps (about 5 mm) and observe after each step or short batch.
+
+- Restrictions (task-specific actions to avoid): Do not push, tip or move the green cube. Do not release the red cube from a height; open the gripper only when the force shows that the red cube rests on the green cube.
+
+
+3. Task-specific notes
+
+- Geometry (working pose, coordinate assumptions and object relationships): The table surface is horizontal; its normal is world +Z. At the start the fingers point world -Z. In the left wrist image (looking down along the fingers), image right = world -Y and image up = world +X (away from the robot). The head camera faces the robot from the far side of the table: image right = world +Y and image up = toward the robot (world -X), viewed about 45 degrees downward. In this setup right_wrist.rgb is a fixed side view from the robot's left at about the height of the hand, looking across the table: image right = toward the robot (world -X) and image up = world +Z; it shows the cubes and the gripper in profile. Verify these relationships with a small motion before relying on them.
+
+- Visibility (occlusions, useful views and ways to improve observation): During the placement the hand and the held cube hide the green cube in the wrist view, and depth is hard to judge from the images. Rely on the force to detect when the held cube touches the green cube; use the side view (right_wrist.rgb) to check its height and tilt, and the head view for the horizontal alignment.
+
+- Feedback interpretation (task-specific ambiguities): After closing, both tactile pads loaded (normal force on tactile_left.wrench and tactile_right.wrench) together with a gripper reading clearly above fully closed means the red cube is held; a reading near fully closed or an unloaded pad means the grasp missed or is one-sided. While carrying, a sudden change in the tactile forces, or a pad that unloads, means the red cube is slipping. While lowering, a rise in the upward force means contact: if the side view shows the red cube still above the green cube, it is touching an edge or another object; if the red cube is on the green cube, it rests there. Judge contact by force first and confirm with the images.
+
+- Decision rules (observation-to-action examples):
+
+  - Grasp missed (gripper closes fully or a tactile pad stays unloaded): open the gripper, re-centre over the red cube using the wrist view, and grasp again.
+  - Red cube slips or tilts in the gripper while lifting: put it down, re-align the hand with its faces, and grasp again closer to its middle.
+  - Held cube not centred over the green cube in the head or side view: correct horizontally before lowering further.
+  - Contact force while the held cube is still visibly above the green cube: it is touching the green cube's edge or the table; lift slightly, re-align and lower again.
+  - Red cube resting on the green cube: open the gripper, move straight up, and observe for a few seconds before reporting completion.
+  - Red cube falls off the green cube or the green cube moves: pick the red cube up again and repeat the placement.

@@ -1,0 +1,121 @@
+# Important: do not read or use existing skills
+
+During setup, diagnostics and task execution, do not search for, read or invoke any local or installed skills or SKILL.md files. Use this project's prompts and scripts directly, even if a listed skill appears relevant.
+
+
+# System information
+
+Read this reusable prompt once, then only the task-specific prompt selected for the current task.
+
+1. System and control flow
+
+Simulated 7-joint Franka Panda arm with a parallel-jaw gripper (or a fixed tool when the task prompt says so). Three background services:
+
+- Robot server: simulated hardware access (physics simulator); same interface as the real robot server.
+- motion_server.py: converts commands into guarded robot motion. Startup homes the arm and enables Cartesian impedance by default.
+- observation_server.py: continuously reads the left wrist, right wrist and head cameras, both tactile sensors and robot/gripper/status feedback.
+
+Loop: get observations → choose command arguments → execute with --wait → repeat.
+
+2. What to generate
+
+Generate arguments for python terminal_command.py. Prefer delta:
+
+delta --translation-m DX DY DZ --rotation-rad RX RY RZ --duration SECONDS --wait
+pose --position-m X Y Z --quaternion-xyzw QX QY QZ QW --duration SECONDS --wait
+gripper --position OPENING --wait
+status [ID]
+stop --wait
+home --wait
+recover --wait
+
+Batch delta, pose and gripper actions with --next (up to 16 by default). They execute in order under one job ID; --wait covers the whole sequence. Each delta starts from the preceding accepted reference. A failure or stop cancels remaining actions.
+
+delta --translation-m 0.1 0 0 --duration 4 --next delta --translation-m 0 0.05 0 --duration 2 --wait
+
+Use metres, radians and seconds. Delta rotation is an axis-times-angle vector; supply translation, rotation, or both. Pose uses a unit xyzw quaternion. Commands default to world coordinates; --frame base uses native coordinates, and delta --frame tool uses tool axes at command start. World and base share an origin. Commands control the configured TCP (between the fingertips, or at the tool face for a fixed tool); rotation-only commands keep its target position fixed. Gripper opening: 0 closed, 1 open. Delta starts from the accepted command reference, which can differ from measured TCP during contact.
+
+Limits: 0.15 m / 90° per move, 0.035 m/s, 0.08 rad/s, duration 0.05–120 s. --wait completes timed steps; verify actual motion/gripper response in observations. After timeout or Ctrl+C, check status before retrying. Home only when requested; recover after resolving the fault. stop cannot interrupt home.
+
+3. How to get observations
+
+Command pattern:
+python get_observation.py --observations NAME [NAME ...]
+
+Replace NAME with one or more exact observation names, separated by spaces:
+
+```text
+force  eef_pose  joint_angles  motion_status  gripper
+left_wrist.rgb  left_wrist.depth
+right_wrist.rgb  right_wrist.depth
+head.rgb  head.depth
+tactile_left.image  tactile_right.image
+tactile_left.deformation  tactile_right.deformation
+tactile_left.deformation_raw  tactile_right.deformation_raw
+tactile_left.wrench  tactile_right.wrench
+tactile_tip.wrench  tactile_tip_world.wrench
+tactile_left.force  tactile_right.force
+state  all
+```
+
+state groups force, eef_pose and joint_angles. Use all by itself to request every source. Selection controls only returned/saved data; all devices keep streaming.
+
+Example combining robot state, an image and tactile feedback:
+python get_observation.py --observations force eef_pose left_wrist.rgb tactile_tip_world.wrench --wrench tcp --tactile-reference connector
+
+Observation units:
+
+- force: [Fx,Fy,Fz,Mx,My,Mz], N and N.m.
+- eef_pose: [x,y,z,rx,ry,rz], metres and xyz Euler radians; joint_angles: seven radians.
+- gripper: raw register, nominal 0 closed to 1000 open.
+- Depth: metres, zero invalid. Tactile deformation: [dx,dy,depth], SDK units unverified; .deformation subtracts the baseline, .deformation_raw does not.
+- Tactile .wrench: force_n in N; torque_native in native SDK units, not N.m. torque_nm is null until the torque scale is verified.
+- tactile_left.force and tactile_right.force: legacy uncalibrated SDK six-vectors; prefer .wrench for baseline-subtracted feedback.
+
+Observation frames:
+
+ - eef_pose uses native base coordinates. 
+ - For robot force, --wrench raw (default) uses base axes, wrist uses flange origin/axes, and tcp uses TCP origin/world axes. 
+ - Tactile pad wrenches use sensor axes; tactile_tip.wrench uses gripper axes and tactile_tip_world.wrench uses world axes. --tactile-reference selects fingertip (default, +20 mm) or connector (+30 mm), measured from the pad midpoint. Native base vectors (x,y,z) map to world (x,z,-y); convert orientations through rotations, not component reordering.
+
+For combined tactile torque when torque_nm is null, sum the two torque_native_by_pad vectors component-wise; they already use the selected output axes. Use this unscaled signal as a qualitative loading cue, not calibrated tip torque or a rotation angle. Do not add lever_arm_torque_nm to native torque. Verify any corrective motion by whether loading decreases.
+
+Stdout and observations/latest/observation.json contain observations (values/paths) and errors (missing, invalid or stale data; default age limit 0.5 s). Samples are not synchronized. Open PNGs with the image tool; load arrays with numpy.load(path, allow_pickle=False). Each call replaces latest/; read the files and errors before acting.
+
+4. How to send agent requests
+
+- Observation calibration:
+python agent_request.py calibrate-observation --target robot_wrench
+python agent_request.py calibrate-observation --target tactile_wrench
+
+Wait for motion to finish and keep the robot/grasp still without external contact. robot_wrench zeros robot force/torque; tactile_wrench zeros both pads' wrench and deformation for the current grasp. Each averages one second and stores the baseline in memory. This changes observation baselines only, without moving the robot or resetting the SDK image reference.
+
+- Soft force threshold:
+python agent_request.py set-soft-force --newtons N
+python terminal_command.py status
+
+Replace N with the threshold in newtons (10 restores the default). Wait until the motion server is ready with no active or queued actions. The value must be positive, below hard_force_n, and above the calibrated force-bias magnitude. The response confirms the previous and new thresholds; status reports soft_force_n, startup_soft_force_n and hard_force_n. A rejected request leaves the setting unchanged; after a timeout, check status before retrying. Changes persist until another update or server restart; the startup default is 10 N. Choose when to change and restore the threshold from the task prompt.
+
+
+# General operation notes
+
+1. Assume all three services are running when asked to start a task. Leave them running and do not modify code during task execution. Restarting the observation server resets the tactile baseline.
+
+2. The robot uses impedance control for contact. The motion server starts with a 10 N soft force threshold, adjustable through agent_request.py. It clips translation into contact along overloaded base axes; it does not command a contact force or guarantee a force cap. The hard force threshold remains unchanged (default 50 N). Choose contact targets and motion patterns from the task prompt.
+
+3. Robot force feedback is estimated and may report force without contact. Interpret it together with images and observed motion.
+
+4. Request and read only the observations needed for the current decision. Wrist and head views can provide complementary information.
+
+
+# Most important for latency performance
+
+Apply these preferences within the task-specific contact and feedback requirements. All system motion limits still apply.
+
+1. Use the provided project scripts directly. The no-skills restriction above applies throughout setup, diagnostics and execution.
+
+2. Prioritize speed and efficiency. Get an observation, interpret it, and choose an action directly unless the situation needs further analysis. Avoid repeating reasoning already covered by these prompts.
+
+3. Rely on the scripts' validation and reported errors. Focus on interpreting observations and choosing command arguments. Avoid rereading source code or loading it into the conversation during routine operation.
+
+4. Prefer purposeful, longer actions when they fit the task and the observed space, within the configured motion limits. When a curved path is already clear, submit a few short delta segments together to approximate it. Get fresh observations before planning any segment that depends on new feedback. Use the task prompt for movement patterns and feedback rules.

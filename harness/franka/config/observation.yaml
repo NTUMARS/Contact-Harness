@@ -1,0 +1,57 @@
+# Settings of the observation server.
+robot_address: http://127.0.0.1:5003
+motion_server: http://127.0.0.1:8081
+default_observations: [state, motion_status, gripper_status, wrist.rgb, wrist.depth, third_view.rgb, third_view.depth]
+
+# Same environment-on-robot sign as motion_server.py.
+force_sign: -1
+tare_on_start: true  # One-second stationary/unloaded zero; motion guards are unaffected.
+# EE_T_K is not exposed by the robot HTTP API. Identity matches the motion-server
+# default. If the robot uses a custom stiffness frame, put its actual transform here.
+# Pose format: [x_m, y_m, z_m, roll_rad, pitch_rad, yaw_rad].
+ee_to_stiffness: [0, 0, 0, 0, 0, 0]
+flange_to_ee: null  # Infer once from stationary measured q/pose using the local Panda model.
+# Franka world and base share the same origin and axes.
+# raw and tcp wrenches therefore use the same axes; wrist uses flange axes.
+world_from_base: [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+
+# Optional application reference points, in metres from the native EE origin,
+# expressed in EE axes. Supply measured Franka geometry before selecting them.
+# Pad offsets of other grippers cannot be reused for this gripper.
+wrench_reference_points_m:
+  ee: [0, 0, 0]
+  fingertip: null
+  connector: null
+
+# Wrist: Intel RealSense D405.
+# No automatic first-device fallback. Missing cameras report per-source errors.
+cameras:
+  wrist:
+    type: realsense
+    serial: 'WRIST_REALSENSE_SERIAL'
+    color_exposure: 33000  # SDK microseconds; D405 shares color/depth exposure.
+    color_gain: 24
+    width: 640
+    height: 480
+    fps: 15
+    warmup_frames: 10
+  side:
+    enabled: false
+    note: 'Optional side camera, disabled. Assign its serial/profile and enable it to use it.'
+    type: realsense
+    serial: null
+    width: 640
+    height: 480
+    fps: 15
+    warmup_frames: 10
+  third_view:
+    enabled: true
+    type: realsense
+    serial: "THIRD_VIEW_REALSENSE_SERIAL"
+    color_exposure: 333  # SDK 100-microsecond units: 33.3 ms.
+    color_gain: 64
+    width: 640
+    height: 480
+    fps: 15
+    warmup_frames: 10
+    note: 'Intel RealSense D435i at the side of the workspace. Camera axes are independent of the wrist view.'

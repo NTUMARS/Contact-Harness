@@ -1,0 +1,38 @@
+# Task prompt
+
+Read docs/agent_prompt.txt first. 
+
+1. Task description
+
+- Goal (object/workspace and desired result): Wipe the dirt marks off the table surface.
+- Initial state (tool, grasp and starting assumptions): A flat wiping tool (sponge-like pad) is rigidly mounted on the hand instead of a gripper when the task starts.
+- Completion (observable success criteria): Most dirt marks are gone. Shallow, faint traces are acceptable.
+
+
+2. Action requirements
+
+- Observations (fields needed to choose actions and check completion): Use force, eef_pose, joint_angles, left_wrist.rgb and head.rgb as needed:
+  python get_observation.py --observations force eef_pose joint_angles left_wrist.rgb head.rgb --wrench tcp
+
+- Sequence (required order of actions): Approach the table and establish contact first. Start wiping at one end of the marked area, then maintain contact while sliding parallel to the table.
+
+- Contact target (desired contact, force or other physical conditions): Establish meaningful contact force near the active soft threshold (default 10 N). Command a target beyond the table surface to maintain contact under impedance control, adjusting from visual and force feedback.
+
+- Motion style (preferred movement pattern and action size): Use long, purposeful wiping strokes where the marked area calls for them, within the system's motion limits.
+
+- Restrictions (task-specific actions to avoid): The wiping tool is fixed to the hand; gripper commands should not be needed.
+
+
+3. Task-specific notes
+
+- Geometry (working pose, coordinate assumptions and object relationships): The table surface is horizontal; its normal is world +Z, so contact is made toward world -Z and wiping strokes are parallel to the world X-Y plane. The wrist camera's forward axis (camera Z) is the tool's approach axis (world -Z at the start); in the wrist image, image right = tool -X and image up = tool +Y (convert to world axes from the measured eef_pose, or use delta --frame tool). The head camera faces the robot from the far side of the table: image right = world +Y, image up = toward the robot (world -X), viewed 45 degrees downward.
+
+- Visibility (occlusions, useful views and ways to improve observation): The wrist camera is on the hand looking down along the tool, so the tool may obscure the marked area right under it. If the next action or completion is unclear, retreat far enough within the motion limits to widen the wrist camera's view. Use the head view for complementary information.
+
+- Feedback interpretation (task-specific ambiguities): An estimated force before reaching the table may be a false contact indication. Establish actual table contact using images and force feedback together before sliding.
+
+- Decision rules (observation-to-action examples):
+
+  - Dirt to the right of the tool in the wrist image: move right in the image, corresponding to tool -X (convert to world axes from eef_pose).
+  - Contact force approaching the active soft threshold (default 10 N): retreat slightly, since excessive friction may prevent sliding.
+  - Contact force below the target: advance slightly to maintain contact. This acts as a simple force controller.

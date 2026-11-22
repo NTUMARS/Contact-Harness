@@ -1,0 +1,112 @@
+# Important: do not read or use existing skills
+
+During setup, diagnostics and task execution, do not search for, read or invoke any local or installed skills or SKILL.md files. Use this project's prompts and scripts directly, even if a listed skill appears relevant.
+
+
+# System information
+
+Read this reusable prompt once, then only the task-specific prompt selected for the current task.
+
+1. System and control flow
+
+This is a 7-joint Franka arm with a Franka gripper. Three background services:
+
+- Robot server: hardware access, implemented by franka_robot_server.py.
+- motion_server.py: converts commands into guarded robot motion. Startup connects to the robot controller's existing Cartesian impedance mode.
+- observation_server.py: continuously reads the wrist and right third_view cameras and robot/gripper/status feedback.
+
+Loop: get observations → choose command arguments → execute with --wait → repeat.
+
+2. What to generate
+
+Generate arguments for python terminal_command.py. Prefer delta:
+
+delta --translation-m DX DY DZ --rotation-rad RX RY RZ --duration SECONDS --wait
+pose --position-m X Y Z --quaternion-xyzw QX QY QZ QW --duration SECONDS --wait
+gripper --position OPENING --wait
+status [ID]
+stop --wait
+home --wait
+recover --wait
+
+Batch delta, pose and gripper actions with --next (up to 16 by default). They execute in order under one job ID; --wait covers the whole sequence. Each delta starts from the preceding accepted reference. A failure or stop cancels remaining actions.
+
+delta --translation-m 0.1 0 0 --duration 4 --next delta --translation-m 0 0.05 0 --duration 2 --wait
+
+Use metres, radians and seconds. Delta rotation is an axis-times-angle vector; supply translation, rotation, or both. Pose uses a unit xyzw quaternion. Commands default to base coordinates; --frame base uses native coordinates, and delta --frame tool uses the accepted EE reference axes at command start. World and base have the same origin and axes in this setup. Commands control the robot controller's native EE/TCP; rotation-only commands keep its target position fixed. Gripper opening: 0 closed, 1 open. Delta starts from the accepted command reference, which can differ from measured TCP during contact.
+
+Limits: 0.15 m / 90° per move, 0.025 m/s with the current robot controller, 0.08 rad/s, duration 0.02–120 s. --wait completes timed steps; verify actual motion/gripper response in observations. After timeout or Ctrl+C, check status before retrying. Home only when requested; recover after resolving the fault. stop cannot interrupt native home/gripper operations.
+
+3. How to get observations
+
+Command pattern:
+python get_observation.py --observations NAME [NAME ...]
+
+Replace NAME with one or more exact observation names, separated by spaces:
+
+```text
+force  eef_pose  joint_angles  motion_status  gripper_status
+wrist.rgb  wrist.depth
+third_view.rgb  third_view.depth
+torque  wrench
+state  all
+```
+
+state groups force, eef_pose and joint_angles. Use all by itself to request every enabled source. Selection controls only returned/saved data; all devices keep streaming.
+
+Example combining robot state, an image and torque feedback:
+python get_observation.py --observations force eef_pose wrist.rgb torque --wrench tcp
+
+Observation units:
+
+- force: [Fx,Fy,Fz,Mx,My,Mz], N and N.m; torque selects [Mx,My,Mz]; wrench provides force_n and torque_nm with frame/reference metadata. These expose the same Franka estimate, with the observation baseline subtracted.
+- eef_pose: [x,y,z,rx,ry,rz], metres and xyz Euler radians; joint_angles: seven radians.
+- gripper_status: controller command state and target_width_m in metres; measured opening is unavailable.
+- Depth: metres, zero invalid.
+
+Observation frames:
+
+ - eef_pose uses native base coordinates. 
+ - For force, torque and wrench, --wrench raw (default) uses EE origin/base axes, wrist uses flange origin/axes, and tcp uses EE origin/world axes. 
+ - --wrench-reference defaults to ee; fingertip/connector require configured offsets and are currently unavailable. Native base vectors (x,y,z) map to world (x,y,z); orientations are also unchanged between base and world.
+
+Stdout and observations/latest/observation.json contain observations (values/paths) and errors (missing, invalid or stale data; default age limit 0.5 s). Samples are not synchronized. Open PNGs with the image tool; load arrays with numpy.load(path, allow_pickle=False). Each call replaces latest/; read the files and errors before acting.
+
+4. How to send agent requests
+
+- Observation calibration:
+python get_observation.py --calibrate
+
+Wait for motion to finish and keep the robot/grasp still without external contact. robot_wrench zeros the six-axis feedback. It averages one second and stores the baseline in memory. This changes observation baselines only, without moving the robot.
+
+- Soft force threshold:
+python -c "from terminal_command import MotionClient; print(MotionClient().set_soft_force(N))"
+python terminal_command.py status
+
+Replace N with the threshold in newtons (10 restores the default). Wait until the motion server is ready with no active or queued actions. The value must be positive, below hard_force_n, and above the calibrated force-bias magnitude. The response confirms the previous and new thresholds; status reports soft_force_n, startup_soft_force_n and hard_force_n. A rejected request leaves the setting unchanged; after a timeout, check status before retrying. Changes persist until another update or server restart; the startup default is 10 N. Choose when to change and restore the threshold from the task prompt.
+
+
+# General operation notes
+
+1. Assume all three services are running when asked to start a task. Do not start new ones on your own, leave them running, and do not modify code during task execution. Restarting the observation server resets the robot wrench baseline.
+
+2. The robot uses impedance control for contact. The motion server starts with a 10 N soft force threshold, adjustable through MotionClient.set_soft_force. It clips translation into contact along overloaded base axes; it does not command a contact force or guarantee a force cap. The hard force threshold remains unchanged. Choose contact targets and motion patterns from the task prompt.
+
+3. Robot force feedback is estimated and may report force without contact. Interpret it together with images and observed motion.
+
+4. Request and read only the observations needed for the current decision. Wrist and third_view views can provide complementary information.
+
+
+# Most important for latency performance
+
+Apply these preferences within the task-specific contact and feedback requirements. All system motion limits still apply.
+
+0. Never start new servers (motion and observations) on your own. Use the existing ones.
+
+1. Use the provided project scripts directly. The no-skills restriction above applies throughout setup, diagnostics and execution.
+
+2. Prioritize speed and efficiency. Get an observation, interpret it, and choose an action directly unless the situation needs further analysis. Avoid repeating reasoning already covered by these prompts.
+
+3. Rely on the scripts' validation and reported errors. Focus on interpreting observations and choosing command arguments. Avoid rereading source code or loading it into the conversation during routine operation.
+
+4. Prefer purposeful, longer actions when they fit the task and the observed space, within the configured motion limits. When a curved path is already clear, submit a few short delta segments together to approximate it. Get fresh observations before planning any segment that depends on new feedback. Use the task prompt for movement patterns and feedback rules.

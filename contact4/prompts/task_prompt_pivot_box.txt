@@ -1,0 +1,46 @@
+# Task prompt
+
+Read docs/agent_prompt.txt first.
+
+1. Task description
+
+- Goal (object/workspace and desired result): Stand the flat box up on one of its narrow faces against the low wall behind it, by pushing it with the closed fingers.
+- Initial state (tool, grasp and starting assumptions): The fingers are closed and point straight down, a few centimetres in front of the box's near face (the face toward the robot) and about 10 cm above the table. The box lies flat between the hand and the wall, with its far face close to or touching the wall. The box is wider than the maximum gripper opening, so it cannot be grasped and must be moved by pushing.
+- Completion (observable success criteria): The box stands upright on a narrow face, touching or close to the wall, and stays still after the fingers have moved away from it.
+
+
+2. Action requirements
+
+- Observations (fields needed to choose actions and check completion): Use force, eef_pose, joint_angles, left_wrist.rgb, right_wrist.rgb and head.rgb as needed:
+  python get_observation.py --observations force eef_pose joint_angles left_wrist.rgb right_wrist.rgb head.rgb --wrench tcp
+
+- Sequence (required order of actions): Lower the closed fingertips in front of the near face, close to the table, and make contact low on the near face. Push the box toward the wall until it touches the wall. Then keep pushing toward the wall while raising the contact point, so that the near edge lifts and the box rotates about its bottom edge at the wall. The near edge moves along an arc around that bottom edge, so as the tilt grows, shift the motion from mainly upward to mainly toward the wall to stay on the edge. Once the box leans against the wall, move the fingertips over its upper edge and push toward the wall and slightly downward until it stands upright. Finally withdraw the fingers without touching the box and check that it stays upright.
+
+- Contact target (desired contact, force or other physical conditions): Use moderate pushing forces, well below the active soft threshold (default 10 N). Too little force lets the fingertips slip on the box; pressing too hard pins the box between the fingers and the wall and can lift it off the table instead of rotating it. Once the fingertips are on the box, maintain the push: command targets slightly beyond the contact surface so that impedance control keeps a steady push of a few newtons, and do not let the push drop to zero until the box stands upright.
+
+- Motion style (preferred movement pattern and action size): While in contact with the box, use small steps (about 5 mm translations) and observe after each step or short batch. Larger moves are fine for repositioning in free space away from the box.
+
+- Restrictions (task-specific actions to avoid): Keep the fingers closed; gripper commands should not be needed. Do not try to grasp the box.
+
+
+3. Task-specific notes
+
+- Geometry (working pose, coordinate assumptions and object relationships): The table surface is horizontal; its normal is world +Z. The wall is beyond the box in world +X (away from the robot) and its face toward the robot is vertical. Lying flat, the box is about 10 cm deep (world X), 16 cm wide (world Y) and 5 cm thick; the wall is taller than the lying box and lower than the box when it stands. At the start the fingertips point world -Z. In the left wrist image (looking down along the fingers), image right = world -Y and image up = world +X (toward the wall). The head camera views the scene from the robot's left side and above, looking back across the box: image right is roughly toward the robot (world -X). In this setup right_wrist.rgb is a fixed side view from the robot's right at about table height, looking across the box along the wall: image right = world +X (toward the wall) and image up = world +Z; it shows the box's tilt, the wall and the table in profile. Verify these relationships with a small motion before relying on them.
+
+- Visibility (occlusions, useful views and ways to improve observation): The fingers can hide the contact point in the wrist view. Use the side view (right_wrist.rgb) to judge the box's tilt and its contact with the wall and the table, and the head view for the overall placement.
+
+- Feedback interpretation (task-specific ambiguities): Force rising while the box neither moves nor rotates means the box is pinched against the wall or the fingertips are pressing into the table; reduce the push and adjust the contact height. A sudden force drop together with box motion means the fingertips slipped or the box fell back. Judge the box's rotation from the images, not from force alone.
+
+- Decision rules (observation-to-action examples):
+
+  - Box slides toward the wall without tilting: it is not yet at the wall; continue the push until it touches the wall.
+  - Box at the wall but its near edge does not rise: move the contact slightly higher on the near face and add a small upward component while keeping the push toward the wall.
+  - Fingertips slipping up over the near face: lower the contact and push more horizontally.
+  - Box tilted by about 30 degrees or more but no longer rotating while the fingertips rise: the motion is too vertical; move mainly toward the wall with only a small upward component.
+  - Box lifting off the table or sliding up the wall: reduce the force.
+  - Box leaning on the wall: stop lifting; reposition above its upper edge and push toward the wall and slightly down.
+  - Push force dropping while the fingertips should be in contact: advance slightly toward the box to restore it before continuing to lift or rotate.
+  - Push force rising toward the soft threshold: back off slightly.
+  - Box close to upright (leaning on the wall): keep the fingertips on its upper edge with a steady push mainly toward the wall and slightly downward; stop pushing only once it stands upright, then withdraw.
+  - Box falls back flat: return to the near face and start again. Before the next attempt, check in the side view at which tilt and during which motion it fell, and change that part of the motion. Keep trying with adjusted motions; do not stop after a few failed attempts.
+  - Box upright: withdraw upward and toward the robot without touching it, then observe it for a few seconds before reporting completion.

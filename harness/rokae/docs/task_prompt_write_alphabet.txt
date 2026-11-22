@@ -1,0 +1,52 @@
+# Task prompt
+
+Read docs/agent_prompt.txt first.
+
+1. Task description
+
+- Goal (letters, style, workspace and desired result): Write the requested letter(s) on the whiteboard. Follow the requested size and placement; use uppercase block letters unless another case or style is specified. If no letters are specified, ask before drawing.
+- Initial state (tool, grasp and starting assumptions): A board-compatible pen is already held securely in the gripper, with its tip exposed.
+- Completion (observable success criteria): The letters are recognizable, with the intended straight strokes, curves, openings and connections. Finish with the pen clear of the board.
+
+
+2. Action requirements
+
+- Observations (fields needed to choose actions and check completion)
+
+  python get_observation.py --observations force tactile_tip_world.wrench eef_pose joint_angles left_wrist.rgb right_wrist.rgb head.rgb --wrench tcp --tactile-reference connector
+
+  (1). Use robot force[0:3] for force feedback. 
+  (2). For torque feedback, use only tactile_tip_world.wrench with frame=world and reference=connector (cable tip). However, torque control should not be needed most of the time in this task as the robot is compliant.
+
+- Sequence (required order of actions): 
+  (0). Calibrate tactile and force observations at task start with the current cable grasp still and clear of socket contact. Repeat after grasp changes, never under external contact.
+  (1) Locate clear writing space and plan each letter's strokes, spacing and pen lifts before contact. Approach the first stroke's start, establish light contact, then draw parallel to the board. Make sure you check the force and the force is at around the control target before you draw every line. Inspect the result between strokes or short curve sequences.
+
+- Contact target (desired contact, force or other physical conditions): Use a soft limit of 10N, but maintain a 5N board reaction force through motion control (not the total force that include lateral friction). Adjust contact with small movements along the board normal using images and force trends. However, force and torque estimation can have errors, thus reading in the force and torque observation does not suggest contact. Always judge contact together with the vision if needed.
+
+- Motion style (preferred movement pattern and action size): Do not draw a straight component even though you are confident. the board may be uneven and the pen may lose contact if force feedback to you is too sparse. draw at most 4cm per step. The server produces straight translation segments, so approximate curves in letters such as R, O and G conservatively with 0.5–1 cm segments (0.005–0.01 m), or even shorter for tight curvature, near a junction, or if the required character size is small. Batch a few clear segments with --next and --wait, then observe and continue incrementally. Close intended loops over multiple iterations; preserve intentional openings.
+
+- Pen contact (when to maintain contact or lift): Keep contact through connected strokes, corners and successive curve segments. Lift whenever travel to the next stroke would add an unwanted line, including between separate letters. Retract along the board normal until the tip visibly clears, move to the next start while clear, then re-establish light contact. Do not lift at every curve segment.
+
+- Restrictions (task-specific actions to avoid): Keep the pen grasped and its orientation steady while drawing; gripper commands should not be needed. Avoid repeatedly tracing completed strokes unless a visible gap needs repair.
+
+
+3. Task-specific notes
+
+- Geometry (working pose, coordinate assumptions and object relationships): Plan from the actual pen tip; it may be offset from the configured TCP. Wrist camera's forward axis (camera Z) aligns with world X, the first delta translation component. In the wrist image, positive world Y points left and positive world Z points up. Verify this relationship and the approach direction from observations before applying it.
+
+- Visibility (occlusions, useful views and ways to improve observation): Use the wrist view for the tip and local ink, and the head view and right wrist view for overall shape and spacing. If the pen obscures the result, lift and move clear before inspecting. Use the right wrist view to check the height of the pen w.r.t the reference and other letters.
+
+- Feedback interpretation (task-specific ambiguities): Estimated force alone does not prove contact. Use visible tip contact and new ink together with force feedback. After constrained motion, compare the actual tip and drawn endpoint with the plan before continuing.
+
+- Decision rule exampled (letter geometry and stroke transitions):
+
+  - O: maintain contact around the loop, join the starting point carefully, then lift.
+  - R: draw the stem, lift to its top, draw the curved bowl back to the stem midpoint, then continue into the diagonal leg.
+  - G: retain the opening in the outer curve and add the inward bar; do not close it into an O.
+  - A: draw the two connected outer legs, then lift to the crossbar's start and draw the crossbar.
+  - Curve drifting or a junction approaching: shorten the next segments and inspect before committing further motion.
+
+- Important: Do not make up for the incomplete component (small gaps that does make the letter non-identifiable) unless what you draw is completely different from what you intended to draw (so judge before drawing the next).
+- Note that due to compliance, the actual length drawn could be shorter than the command due to friction, if the direction is not the same as last draw. so when you see the drawn direction is the intended direction, somewhat compensate in the correct direction to mitigate compliance behavior immediately.
+- Again, make sure you check the force and the force is at around the control target before you draw every line

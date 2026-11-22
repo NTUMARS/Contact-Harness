@@ -1,0 +1,59 @@
+# Task prompt
+
+Read docs/agent_prompt.txt first.
+
+- Goal: Peel the cucumber (or other vegetables placed on the table) once from top to the end
+- Initial state (grasp and setup): The peeler is already being grasped and the vegetable is on the table below the end-effector
+- Completion (observable success): Peeler reach to the tail of the vegetables
+
+- Observations (action and completion feedback):
+  python get_observation.py --observations force eef_pose joint_angles wrist.rgb third_view.rgb --wrench tcp --wrench-reference ee
+
+  (1). Use force[0:3] for forces and force[3:6] for torques.
+  (2). Reassess after unexpected feedback or setup changes.
+
+- Sequence (required order):
+
+  (0). move the peeler's blade right above the top of the vegetable (visual top in the wrist camera). Use side view and wrist view to decide visually if the blade is on top and the vegetable is centered in the blade's width without contacting with the vegetables. Note, this 'top' should not be the very end of the vegetable (where it is very curved) but should be the segment where the vegetable start to show some straightness. move on to the next if this PASS.
+
+  (1). move downward and make contact with the top of the vegetable using the blade. the desired contact should be 7N (you should set the soft force limit to 12 N, but moving against the vegetable to control the force to maintain 7N). This force should be the contact force you need to maintain for the whole task from now on. Move on to the next if this PASS
+
+  (2). Slide along the vegetables while maintaining the force. Repeat the following cycles to achieve it. 
+      - Check from different view on the direction you need to move for the next action segment then execute. In addition to lateral movement, if the force is below or over the force to be maintained, adjust the desired position penetration accordingly together with the lateral movement. after deciding the translation, execute them. After done execution, repeat this step. you can increase the force limit to 20N in this phase to overcome lateral resistance by still keep the 7N pressure goal. 
+    Note: you do not need to completely peel the vegetable still the real tail, as pressing the vegetable at the tail will lift up the whole vegetable and this is undesirable. at the end of the peeling, ease the force to be maintain gradually while continue with the lateral movement (the desired force should decrease across action calls). There are 2 cases when you need to do this: (a) the blade is not visually to the end, but the vegetable is already lifting up and partially losing contact with the table; (b) the blade is close to the end and vegetable's shape starts to narrow down. Both of the (a)(b) indicate a finishing phase of the task. They are separated due to the complex geometry of the vegetables.
+
+  (3). If the above 'easing force and continue lateral movement' is successful, the blade should leave off the vegetables. This is the task success case and you can stop here unless further requests are proposed.
+
+- Contact target (load and progress): Increase the threshold accordingly if more axial pushing force is needed. Confirm the update succeeded before pushing. Slightly retreat if the force is too large and gently re-establish contact if it is too small.
+
+- Motion style (size and batching): 
+  (1). Longer moves and --next are preferred for all action before contact. Due to the force error and impedance controller, small movement like 1-2 mm may not result in meaningful displacement, thus will cause undesirable repeated adjustment in the freespace. This phase can be relatively aggressive. However, never move more than 5cm at once and you should be cautious again when the blade is close ot the vegetable. 
+  (2). Given that there are soft force limit, you can be more confident when commanding the robot to only do translation. This point is raised because speed of completion is another important requirement beside accuracy.
+
+- Camera and tool geometry (task-specific setup):
+  (0) Always zoom into the blade area first to check progress, never blindly read the image and output. Make sure you understand the image before you move.
+  (1) Wrist: mounted on the wrist and facing downward at the initial pose.
+  (2) Initial wrist-view mapping: gripper and camera forward (+Z) = world -Z / base -Z, image left = world +Y / base +Y, and image up = world +X / base +X (approximate).
+  (3) At the initial pose described above, cache the measured base-frame EEF rotation R0; after arm rotation to R, update directions with d = R @ R0.T @ d_reference. Derive both matrices from measured xyz Euler angles.
+  (4) Third view: positioned to the right of and facing the task area. Use third_view.rgb as a side view to check the task progress (where the blade is contacting with the vegetable) and the blade height. The wrist-view mapping does not apply.
+
+- Tool geometry (rotation pivot): Rotation-only commands pivot about the TCP. 
+
+- Force/torque interpretation (baseline and ambiguity): force readings may be caused by error thus needs to be analyzed together with vision. Compare the six-axis feedback against pre-contact baselines, ignoring resting noise. The feedback uses world axes; for --frame base rotations, map world (x,y,z) to base (x,y,z). Verify corrective direction by its effect.
+
+- Controller limitation (contact response): The soft constraint clips translation components that oppose excessive force; it does not guarantee a force cap. The motion server has no explicit torque limit, and rotation may continue while translation is clipped. A backward command may reduce preload without moving the tip or breaking contact.
+
+
+- Routine examples (preferred patterns to follow when observations meet the conditions):
+
+  - blade and vegetable still far away: move towards the vegetable top
+  - blade right above the top: press down
+  - vegetable shows curvature: reduce the action steps size to allow following curvature
+  - blade close to the tail in the side view: ease force gradually until 0. 
+
+
+- Important hint: 
+  
+  (1) you can see the torque, but direction adjustment should not be needed in the whole process as the blade itself can be rotating
+
+

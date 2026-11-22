@@ -1,0 +1,59 @@
+# Task prompt
+
+Read docs/agent_prompt.txt first.
+
+1. Task description
+
+- Goal (object/workspace and desired result): Stand the T-shape up against the obstacle behind it, by pushing it with the closed fingers.
+- Initial state (tool, grasp and starting assumptions): The fingers are closed and point straight down, a few centimetres in front of the T-shape's tail face (the face toward the robot). The T-shape lies flat between the gripper and the wall, with its far face close to. The T-shape cannot be grasped and must be moved by pushing.
+- Completion (observable success criteria): The T-shape stands upright on the long edge, touching or close to the wall, and stays still after the fingers have moved away from it.
+
+2. Observations (action and completion feedback):
+  python get_observation.py --observations force eef_pose joint_angles wrist.rgb third_view.rgb --wrench tcp --wrench-reference ee
+
+  (0). select modality as needed and do not call all blindly
+  (1). Use force[0:3] for forces and force[3:6] for torques.
+  (2). Reassess after unexpected feedback or setup changes.
+
+3. Action requirements
+
+- Sequence (required order of actions): 
+
+  (1) Move to keep the end-effector tip in the same horizontal level with the T-shape, close to the table, and approach the T-shape tail close enough. Use the side view to decide the height and wrist view to decide if the finger tip and the T-shape tail are centered.
+  
+  (2) Move to push the T-shape against the obstacle until making contact. After the contact is stable, reaching the soft limit, move on to the next step.
+
+  (3) Pivoting: Then keep pushing toward the wall while raising the contact point, so that the near edge lifts and the T-shape rotates about its bottom edge at the wall. The near edge moves along an arc around that bottom edge, so as the tilt grows, shift the motion from mainly upward to mainly toward the wall to stay on the edge. Once the T-shape leans against the wall, move the fingertips over its upper edge and push toward the wall and slightly downward until it stands upright. 
+  
+  (4) Finally withdraw the fingers without touching the T-shape and check that it stays upright.
+
+- Contact target (desired contact, force or other physical conditions): Use a soft force limit of 10N, which is also the force you need to try to maintain. Too little force lets the fingertips slip on the T-shape; pressing too hard pins the T-shape between the fingers and the wall and can lift it off the table instead of rotating it. Once the fingertips are on the T-shape, maintain the push: command targets slightly beyond the contact surface so that impedance control keeps a steady push of a few newtons, and do not let the push drop to zero until the T-shape stands upright.
+
+- Motion style (preferred movement pattern and action size): 
+  
+  (1) While in contact with the T-shape, use small steps (about 5mm-10mm translations) and observe after each step or short batch. Larger moves are fine for repositioning in free space away from the T-shape.
+  (2) Given that the T-shape can be slippery, a good option would be first estimating the orientation (from third view if possible) of the T-shape then try pressing and maintaining the force along the longitudinal axis of the T-shape
+  (3) Given that there are soft force limit, you can be more confident when commanding the robot to only do translation. This point is raised because speed of completion is another important requirement beside accuracy.
+
+- Camera and tool geometry (task-specific setup):
+  (0) Never blindly read the image and output. Make sure you understand the image before you move.
+  (1) Wrist: mounted on the wrist and facing downward at the initial pose.
+  (2) Initial wrist-view mapping: gripper and camera forward (+Z) = world -Z / base -Z, image left = world +Y / base +Y, and image up = world +X / base +X (approximate).
+  (3) At the initial pose described above, cache the measured base-frame EEF rotation R0; after arm rotation to R, update directions with d = R @ R0.T @ d_reference. Derive both matrices from measured xyz Euler angles.
+  (4) Third view: positioned to the right of and facing the task area. Use third_view.rgb as a side view to check the task progress and the gripper and the T-shape status. The wrist-view mapping does not apply.
+
+- Restrictions (task-specific actions to avoid): Keep the fingers closed; gripper commands should not be needed. Do not try to grasp the T-shape.
+
+- Force/torque interpretation (baseline and ambiguity): force readings may be caused by error thus needs to be analyzed together with vision. Compare the six-axis feedback against pre-contact baselines, ignoring resting noise. The feedback uses world axes; for --frame base rotations, map world (x,y,z) to base (x,y,z). Verify corrective direction by its effect.
+
+- Feedback interpretation (task-specific ambiguities): A sudden force drop together with T-shape motion means the fingertips slipped or the T-shape fell back. Judge the T-shape's rotation from the images, not from force alone.
+
+- Decision rules (observation-to-action examples):
+
+  - T-shape slides toward the wall without tilting: it is not yet at the wall; continue the push until it touches the wall.
+  - T-shape at the wall but its near edge does not rise: move the contact slightly higher on the near face and add a small upward component while keeping the push toward the wall.
+  - T-shape tilted by about 30 degrees or more but no longer rotating while the fingertips rise: the motion is too vertical; move mainly toward the wall with only a small upward component.
+  - T-shape lifting off the table or sliding up the wall: reduce the force.
+  - Push force dropping while the fingertips should be in contact: advance slightly toward the T-shape to restore it before continuing to lift or rotate.
+  - T-shape close to upright (leaning on the wall): keep the fingertips on its upper edge with a steady push mainly toward the wall and slightly downward; stop pushing only once it stands upright, then withdraw.
+  - T-shape upright: withdraw upward and toward the robot without touching it, then observe it for a few seconds before reporting completion.

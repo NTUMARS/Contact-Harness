@@ -1,0 +1,41 @@
+# Task prompt
+
+Read docs/agent_prompt.txt first.
+
+1. Task description
+
+- Goal (object/workspace and desired result): Pick up the bowl and put it on the plate.
+- Initial state (tool, grasp and starting assumptions): The gripper is open and points straight down, about 10 cm above the table. The bowl (about 11 cm wide, wider than the maximum gripper opening) and the plate (about 14 cm wide) stand side by side on the table in front of the robot, the bowl on the robot's left and the plate on its right, at random positions and orientations.
+- Completion (observable success criteria): The bowl rests on the plate, right side up and without being held, and stays there after the gripper has moved away.
+
+
+2. Action requirements
+
+- Observations (fields needed to choose actions and check completion): Use force, tactile_left.wrench, tactile_right.wrench, tactile_tip_world.wrench, eef_pose, joint_angles, gripper, left_wrist.rgb, right_wrist.rgb and head.rgb as needed:
+  python get_observation.py --observations force tactile_left.wrench tactile_right.wrench tactile_tip_world.wrench eef_pose joint_angles gripper left_wrist.rgb right_wrist.rgb head.rgb --wrench tcp
+
+- Sequence (required order of actions): Locate the bowl and the plate. Calibrate the force and tactile observations with the gripper open and clear of any contact. Move above the bowl and turn the hand about the vertical axis so that the fingers close across the rim wall at the point of the rim closest to the hand's approach. Lower the open fingers over the rim until the force shows light contact with the bowl or the table, then raise them slightly so that the fingertips are just below the rim, and close the gripper. Check the grasp with both the gripper reading and the tactile pads, recalibrate the force observation while the bowl is clear of any contact, and lift it well clear of the table and of the plate. Move it above the plate and lower it in small steps while watching the vertical force. As soon as the force shows that the bowl rests on the plate, open the gripper, move straight up, and check that the bowl stays on the plate.
+
+- Contact target (desired contact, force or other physical conditions): Find every surface by force rather than by sight alone, and keep each contact light. When finding the table before the grasp, stop at about 2 N. When lowering the held bowl, stop as soon as the upward force rises by about 1 to 2 N above its free-hanging reading, well below the active soft threshold (default 10 N); this means the bowl rests on the plate. Do not press harder.
+
+- Motion style (preferred movement pattern and action size): Larger moves are fine in free space, with the bowl held well above the table. For the final approach to the grasp and to the placement, use small steps (about 5 mm) and observe after each step or short batch.
+
+- Restrictions (task-specific actions to avoid): Do not push or tip the plate. Do not release the bowl from a height; open the gripper only when the force shows that the bowl rests on the plate.
+
+
+3. Task-specific notes
+
+- Geometry (working pose, coordinate assumptions and object relationships): The table surface is horizontal; its normal is world +Z. At the start the fingers point world -Z. In the left wrist image (looking down along the fingers), image right = world -Y and image up = world +X (away from the robot). The head camera faces the robot from the far side of the table: image right = world +Y and image up = toward the robot (world -X), viewed obliquely from above. In this setup right_wrist.rgb is a fixed side view from the robot's left, looking across the table: image right = toward the robot (world -X) and image up = world +Z; it shows the objects and the gripper in profile. Verify these relationships with a small motion before relying on them.
+
+- Visibility (occlusions, useful views and ways to improve observation): During the placement the hand and the held bowl hide the plate in the wrist view, and depth is hard to judge from the images. Rely on the force to detect when the bowl touches the plate; use the side view (right_wrist.rgb) to check its height and tilt, and the head view for the horizontal alignment.
+
+- Feedback interpretation (task-specific ambiguities): After closing, both tactile pads loaded (normal force on tactile_left.wrench and tactile_right.wrench) together with a gripper reading clearly above fully closed means the bowl is held; a reading near fully closed or an unloaded pad means the grasp missed or is one-sided. While carrying, a sudden change in the tactile forces, or a pad that unloads, means the bowl is slipping. While lowering, a rise in the upward force means contact: if the side view shows the bowl still above the plate, it is touching the plate's edge or the table; if the bowl is on the plate, it rests there. Judge contact by force first and confirm with the images.
+
+- Decision rules (observation-to-action examples):
+
+  - Grasp missed (gripper closes fully or a tactile pad stays unloaded): open the gripper, re-centre the fingers on the rim using the wrist view, and grasp again.
+  - Bowl tilts strongly or slips while lifting: put it down and grasp the rim again, deeper.
+  - Bowl not centred over the plate in the head or side view: correct horizontally before lowering further.
+  - Contact force while the bowl is still visibly above the plate: it is touching the plate's edge or the table; lift slightly, re-align and lower again.
+  - Bowl resting on the plate: open the gripper, move straight up, and observe for a few seconds before reporting completion.
+  - Bowl falls off the plate or tips over: pick it up again and repeat the placement.

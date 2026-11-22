@@ -1,0 +1,81 @@
+# Task prompt
+
+Read docs/agent_prompt.txt first.
+
+- Goal (connector and target): Fully insert the specified cable connector into its matching socket (please identify what cable is this and which socket it should be inserted into). This is a fully autonomous task, thus do not stop unless explicitly asked.
+- Initial state (grasp and setup): The connector is already grasped by its housing with the mating end exposed. Check socket stability, finger clearance and cable slack.
+- Completion (observable success): The cable is inserted
+
+- Observations (action and completion feedback):
+  python get_observation.py --observations force eef_pose joint_angles wrist.rgb third_view.rgb --wrench tcp --wrench-reference ee
+
+  (1). Use force[0:3] for forces and force[3:6] for torques.
+  (2). Retain established geometry and the last correction's effect; reassess after unexpected feedback or setup changes.
+
+- Sequence (required order):
+
+  (0). Calibrate robot observations at task start with the current cable grasp still and clear of socket contact. Repeat after grasp changes, never under external contact.
+
+  (1). Roughly align the connector axis and keyed face in free space so the tip can rest on the socket housing surface near the opening. Fine centering happens through contact; do not seek perfect visual alignment first. However for some socket hub, the contact surface is very small, thus blindly moving to make contact first will easily miss the whole hub surface. Therefore, you need to check different views first to decide if the contact surface is small. If so, you need to first move close enough to the hub carefully for better visual alignment (make sure you use all views to understand the true state of the cable. See important note at the end of the prompt), then more or less align visually in order to ensure resting on the surface when you advance. Try to make the connector head slightly lower than (that is off-center by a little) the hole for a start of the next phase. 
+
+  (2). Approach and establish light surface contact. Confirm the contact on the hub surface using both camera images and robot force feedback (expecting meaningful magnitude of force). Before any sliding command: Verify in both views that the connector tip is contacting the front face of the socket housing: not beside, below, above, or beyond the housing. Distinguish connector contact from gripper-finger contact. Force increase alone does not establish this. If any view contradicts that interpretation, or the contact location remains uncertain, do not slide or advance. Withdraw to a clear position, reobserve, and realign.
+
+  (3). Surface searching: After making contact and being sure this is the socket surface, remember this coordinate for later task-completion verification. Maintain contact force under the default 10 N while sliding toward the visible hole center, or its last reliable estimated location if the opening is temporarily occluded. 
+  Mandatory entry gate: Before ending surface search, explicitly assess fresh, zoomed images: wrist: PASS/FAIL/UNCERTAIN; third_view: PASS/FAIL/UNCERTAIN. PASS requires the connector head to fully occupy the opening with no visible gap. Occlusion or insufficient detail means UNCERTAIN, never PASS. Proceed only with both views' PASS results. Force, TCP travel, and apparent engagement cannot override this gate.
+  
+  (4). Connector alignment: Request to set the soft force limit to 20N (This should be 25 N instead for larger connectors like plugs). Do not set 20 N or begin axial insertion unless the entry gate above has passed. This force limit is also the force you should try to maintain. Do translation and rotation adjustment in this phase to reduce lateral force and bending torques while continuing with the insertion through maintain the axial contact force. Before making the decision to release gripper due to succeed, use different views, focusing on the connector part, verifying is it truly inserted. As it may look inserted visually while it is actually stuck at the surface, judge the following for important signals of successful insertion or end of exploration: (a). The previously recorded coordinate may be used to compare whether the connector are inserted by sufficient distance (at least 5mm). (b) Under ideal seating case, the lateral forces and bending torque should be small, reach to a minimum, or even close to zero (may not be zero as the estimations may be inaccurate). 
+
+  Important: Keep adjusting translation and rotation to reduce lateral forces and bending torques, while advancing axially as needed to maintain force near the current soft limit. Do either translation or rotation only as it is not possible to tell the contribution of torque variation in combined motions. Thus the recommended patter is reaching to the soft limit possibly fast through pushing, then do orientation adjustment. Improved readings or ≥5 mm TCP travel alone do not justify release: confirm engagement in multiple views and continue until lateral forces and bending torques approach baseline or a verified local minimum under maintained axial preload. However, the maximum adjustment command call in this phase is 7 times, after which, simply do final verification on whether the connector is still in the socket then release and proceed with the next step.
+
+  (5). After releasing and the connector head stays in the socket, it is possible that the cable is not fully inserted. Decide using different observations that if the following is needed: In this last phase, there are 2 possibilities: (a) the connector has cable: you move back then grasp so that the finger tip rest on the connection of the cable with the connector head (to avoid firm grasping of the connector head again, make sure the figure tip rest at the connector tail); (b) the connector does not have cable: you move back, fully close the gripper, and do not grasp the connector again. As impedance may cause the gripper to drop or lift, make sure you check after moving back and adjust accordingly to maintain the same height. At the same time, check if the connector head is at the center (needs to be centered, otherwise keeps adjusting) of the gripper opening visually. Move to adjust together with the height if not. After grasping, do not do calibration, request for change in the soft force limit to 20N (this magnitude should align with the soft limit in phase (4)), and make a larger-distance openloop 7cm push to insert the connector head using the finger-tip. Do not do any rotation or translation adjustment from this point on. If you see the cable is still not fully inserted, the only option is to regrasp and re-push.
+
+- Command frame (action convention): Use delta --frame base. Surface-search moves are parallel to the housing, with normal adjustments to maintain contact. After entry, advance along the socket's inward axis. Determine these directions from the housing and socket geometry, independently of the camera's forward axis.
+
+- Contact target (load and progress): Use MotionClient.set_soft_force between completed motion commands. Set the soft limit to 10 N for surface search. Once entry or alignment are confirmed, increase the threshold accordingly if more axial pushing force is needed, as indicated in step (4) and step (5). Confirm the update succeeded before pushing. In all in-contact phases, the contact force target for adjusting penetration depth should follow the current soft force limit. Slightly retreat if the force is too large and gently re-establish contact if it is too small.
+
+- Motion style (size and batching): 
+  (1). Longer moves and --next are preferred for all action before contact. Due to the force error and impedance controller, small movement like 1-2 mm may not result in meaningful displacement, thus will cause undesirable repeated adjustment in the freespace. This phase can be relatively aggressive. However, never move more than 5cm at once. And it could be possible that the open loop aggressive movement will make the cable connector miss the socket surface completely (as emphasized in task sequence's step (1)). you need to be aware of this find of situation and do not start in-contact searching until you confirm making contact with the surface from multi-view observations. 
+  (2). Given that there are soft force limit, you can be more confident when commanding the robot to only do translation. This point is raised because speed of completion is another important requirement beside accuracy.
+  (3). Therefore, under both surface searching and connector alignment phase, use translations of 5 mm or rotations of 3.0 degrees over 1 s (note: revert the direction in the next prediction if the measured torque increase). If the measured contact force to be maintained is still far from the limit in the alignment phase (eg, a 5N gap), the advancing distance should be larger than 5 mm (eg. 8 mm). Start at the lower end and reduce for tighter clearance, deeper engagement or rising load. Use --rotation-deg for degrees. Due to impedance, a small 1 mm adjustment will likely not reflect in the resulted motion, so do not take it easily as a 'stall' or 'jam' when it is in the in-contact sliding phase
+
+- Orientation correction (axis and direction): Use world-frame robot torque for tilt corrections when bending load rises. Retain contact for a small trial rotation. Reobserve; keep the direction only if the robot torque error moves toward baseline without worsening alignment or other loads. Otherwise reduce pressure and reverse or withdraw if situation is too complicated. When adjusting torque during the insertion phase, also try to reduce the lateral force together (force along non-insertion axis) as this may also cause jamming. 
+
+- Camera and tool geometry (task-specific setup):
+  (0) Always zoom into the cable insertion area first to check progress, never blindly read the image and output. Make sure you understand the image before you move.
+  (1) Wrist: mounted on the wrist and facing downward at the initial pose.
+  (2) Initial wrist-view mapping: gripper and camera forward (+Z) = world -Z / base -Z, image left = world +Y / base +Y, and image up = world +X / base +X (approximate).
+  (3) At the initial pose described above, cache the measured base-frame EEF rotation R0; after arm rotation to R, update directions with d = R @ R0.T @ d_reference. Derive both matrices from measured xyz Euler angles.
+  (4) Third view: positioned to the right of and facing the insertion area. Use third_view.rgb as a side view to check connector/socket alignment and the remaining gap. This view is for auxiliary decision making; the wrist-view mapping does not apply.
+
+- Tool geometry (rotation pivot): Rotation-only commands pivot about the TCP, so an offset connector tip sweeps an arc. 
+
+- Force/torque interpretation (baseline and ambiguity): Use robot torque direction and changes as qualitative loading cues to guide alignment rotations and avoid jams, not to calculate a rotation angle. Compare the six-axis feedback against pre-contact baselines, ignoring resting noise. The feedback uses world axes; for --frame base rotations, map world (x,y,z) to base (x,y,z). Verify corrective direction by its effect.
+
+- Controller limitation (contact response): The soft constraint clips translation components that oppose excessive force; it does not guarantee a force cap. The motion server has no explicit torque limit, and rotation may continue while translation is clipped. A backward command may reduce preload without moving the tip or breaking contact.
+
+- Visibility (viewing approach): 
+  (1). During contact, approach from below and retain the hole location while it is visible. If it becomes occluded, continue surface search using the third_view or memory; occlusion alone does not require breaking contact. Withdraw for inspection if no view or retained estimate provides a reliable target, or contact remains unstable after adjustment.
+  (2). When the cable head is close enough, the cable head may be visually aligned with the socket in the wrist image while it is actually at a different height. This is because the wrist camera is viewing from top. Use multi-view information to confirm on the situation.
+  (3). However, before socket-housing contact is confirmed, if the housing becomes hidden, stop forward motion and reassess the connector relative to the socket. In this setup, the connector may be too high; lower as needed to regain visibility. Force increase or stalled motion alone does not confirm socket-housing contact. Continue an occluded surface search only after identifying contact with the socket housing.
+
+
+- Routine examples (preferred patterns to follow when observations meet the conditions):
+
+  - Contact is lost or too large during a slide: integrate forth and back movement accordingly with the next tentative motion.
+  - Opening becomes hidden during the surface slide phase, but its retained location estimate remains reliable: continue surface slides toward it.
+  - Tip begins entering the opening: switch from surface search to axial insertion steps.
+  - Uncovered hole just on the left of the connector tip: move left directly without easing force (impedance may cause the position to deviate). Same for all directions.
+  - (alternative, not forced) World-X robot torque error: trial about world +X with python terminal_command.py delta --frame base --rotation-deg 1.0 0 0 --duration 1 --wait.
+  - (alternative, not forced) World-Y robot torque error: trial about world +Y with python terminal_command.py delta --frame base --rotation-deg 0 1.0 0 --duration 1 --wait.
+  - (alternative, not forced) World-Z robot torque error: trial about world +Z with python terminal_command.py delta --frame base --rotation-deg 0 0 1.0 --duration 1 --wait.
+  - When commanding the gripper to open at the end of step (4) and (5), always use the following pattern in a row: withdraw by 3cm first (to prevent the gripper from colliding with the socket surface due to previous impedance behavior), then release the gripper, then move back further to prepare for step (5). Otherwise the cable will be plugged out.
+
+
+- Important hint, must follow: 
+  
+  (1) Make sure you truly understand the multi-source observation before generating command, and do not simply copy the most recent motion patterns directly. 
+  (2) Before establishing contact, use the third_view camera to decide if the current connector location is too high or too low as it provides the most informative side view. Before task sequence step (4) in the gating phase, the cables may looks aligned due to weird shape of the connector and the blocking view. Use the third_view camera for motion decision (eg, if there is still a gap vertically) 
+  (3) Do not blindly adjust for free space position in task sequence step (1). The cable head may already be trapped under or to the side of the hub and blindly assuming freespace motion will cause the connector to collide with the hub and cause non-recoverable rotation in finger tips. Withdraw immediately in this case. Before you intentionally making contact with the hub surface, any abnormal lateral force (with meaningful magnitude) is likely suggesting the above situation. Thus you need to also check for force even the current phase is supposed to be in the freespace.
+  (4) Do not blindly adjust for force and torque in the task sequence step (4). Your rotation and translation may move the head completely out of the socket. Make sure you check the vision from all views and make sure you understand if the cable is still in the socket or already came out and tilted after every adjustment before making decision for the next move. If the head is out already, simply withdraw and try from the first step over again.
+  (5) in the task sequence step (3), due to the strange shape or sharp corner of the connector head, moving in one direction may cause jam even though there is clear gap in that direction. Thus in this phase, if the command in one direction barely moves the EEF, then exploring other (eg, orthogonal) directions may help resolve the stress.
+

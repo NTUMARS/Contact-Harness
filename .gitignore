@@ -1,0 +1,18 @@
+__pycache__/
+*.pyc
+observations/
+logs/
+*.log
+.venv/
+.venv_sim/
+
+# Contact-4: created by setup.sh or at run time
+contact4/runs/
+contact4/.codex_home/
+contact4/.agent_cc/
+contact4/agent_settings.json
+contact4/stack/docs/
+contact4/stack/tmp/
+contact4/NO_RENDER
+contact4/MUJOCO_LOG.TXT
+contact4/demos/*/
